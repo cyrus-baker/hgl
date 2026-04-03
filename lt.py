@@ -7,95 +7,96 @@ import os
 
 print(os.environ.get("HF_ENDPOINT"))
 
-tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3.5-27B", cache_dir="./.cache")
+if __name__ == "__main__":
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3.5-27B", cache_dir="./.cache")
 
-# 测试一段多语言文本
-text = "Hello world! 你好，世界！नमस्ते दुनिया! (Hindi)"
-tokens = tokenizer.tokenize(text)
-print(f"Qwen Tokens: {tokens}")
-print(tokenizer.decode(tokenizer.encode(text)))
+    # 测试一段多语言文本
+    text = "Hello world! 你好，世界！नमस्ते दुनिया! (Hindi)"
+    tokens = tokenizer.tokenize(text)
+    print(f"Qwen Tokens: {tokens}")
+    print(tokenizer.decode(tokenizer.encode(text)))
 
-vocab_size = len(tokenizer)
-num_transformer_blocks = 8
-maxlen = 256
-embed_dim = 256
-num_heads = 8
-feed_forward_dim = 256
-batch_size = 144 * 1 / 2  # divide by 2 in case of model parallelism
+    vocab_size = len(tokenizer)
+    num_transformer_blocks = 8
+    maxlen = 256
+    embed_dim = 256
+    num_heads = 8
+    feed_forward_dim = 256
+    batch_size = 144 * 1 / 2  # divide by 2 in case of model parallelism
 
-num_epochs = 1
-top_k = 10
+    num_epochs = 1
+    top_k = 10
 
-num_proc = 32
+    num_proc = 128
 
-data = load_from_disk("my_tinystory_local")
+    data = load_from_disk("my_tinystory_local")
 
-# ======== 开始 HF 常规数据处理 ========
-def tokenize_function(examples):
-    # 使用 tokenizer 将文本转为 token ID
-    return tokenizer(examples["text"])
+    # ======== 开始 HF 常规数据处理 ========
+    def tokenize_function(examples):
+        # 使用 tokenizer 将文本转为 token ID
+        return tokenizer(examples["text"])
 
-print("正在进行 Tokenization...")
-if not os.path.exists(".cache/tokenized_datasets"):
-    tokenized_datasets = data.map(
-        tokenize_function,
-        batched=True,
-        num_proc=num_proc, # 可以根据你的 CPU 核心数调整
-        remove_columns=["text"], # 移除原始文本列，只保留 token ids
-    )
-    tokenized_datasets.save_to_disk(".cache/tokenized_datasets")
-else:
-    tokenized_datasets = load_from_disk(".cache/tokenized_datasets")
-
-
-
-
-def group_texts(examples):
-    # 在每段文本末尾加上 EOS token 隔离上下文
-    eos_id = tokenizer.eos_token_id
-    for i in range(len(examples["input_ids"])):
-        examples["input_ids"][i].append(eos_id)
-        if "attention_mask" in examples:
-            examples["attention_mask"][i].append(1)
-
-    # 使用 itertools.chain 极大地加速列表拼接
-    concatenated_examples = {
-        k: list(chain.from_iterable(examples[k]))
-        for k in examples.keys()
-    }
-    total_length = len(concatenated_examples[list(examples.keys())[0]])
-
-    if total_length >= maxlen:
-        total_length = (total_length // maxlen) * maxlen
-
-    result = {
-        k: [t[i : i + maxlen] for i in range(0, total_length, maxlen)]
-        for k, t in concatenated_examples.items()
-    }
-    result["labels"] = result["input_ids"].copy()
-    return result
-
-print(f"正在将数据打包成 maxlen={maxlen} 的块...")
-if not os.path.exists(".cache/lm_datasets"):
-    lm_datasets = tokenized_datasets.map(
-        group_texts,
-        batched=True,
-        num_proc=num_proc,
-    )
-    lm_datasets.save_to_disk(".cache/lm_datasets")
-else:
-    lm_datasets = load_from_disk(".cache/lm_datasets")
+    print("正在进行 Tokenization...")
+    if not os.path.exists(".cache/tokenized_datasets"):
+        tokenized_datasets = data.map(
+            tokenize_function,
+            batched=True,
+            num_proc=num_proc, # 可以根据你的 CPU 核心数调整
+            remove_columns=["text"], # 移除原始文本列，只保留 token ids
+        )
+        tokenized_datasets.save_to_disk(".cache/tokenized_datasets")
+    else:
+        tokenized_datasets = load_from_disk(".cache/tokenized_datasets")
 
 
 
 
+    def group_texts(examples):
+        # 在每段文本末尾加上 EOS token 隔离上下文
+        eos_id = tokenizer.eos_token_id
+        for i in range(len(examples["input_ids"])):
+            examples["input_ids"][i].append(eos_id)
+            if "attention_mask" in examples:
+                examples["attention_mask"][i].append(1)
 
-print(f"数据处理完成！训练集共有 {len(lm_datasets['train'])} 个样本。")
+        # 使用 itertools.chain 极大地加速列表拼接
+        concatenated_examples = {
+            k: list(chain.from_iterable(examples[k]))
+            for k in examples.keys()
+        }
+        total_length = len(concatenated_examples[list(examples.keys())[0]])
+
+        if total_length >= maxlen:
+            total_length = (total_length // maxlen) * maxlen
+
+        result = {
+            k: [t[i : i + maxlen] for i in range(0, total_length, maxlen)]
+            for k, t in concatenated_examples.items()
+        }
+        result["labels"] = result["input_ids"].copy()
+        return result
+
+    print(f"正在将数据打包成 maxlen={maxlen} 的块...")
+    if not os.path.exists(".cache/lm_datasets"):
+        lm_datasets = tokenized_datasets.map(
+            group_texts,
+            batched=True,
+            num_proc=num_proc,
+        )
+        lm_datasets.save_to_disk(".cache/lm_datasets")
+    else:
+        lm_datasets = load_from_disk(".cache/lm_datasets")
+
+
+
+
+
+    print(f"数据处理完成！训练集共有 {len(lm_datasets['train'])} 个样本。")
 # ======== 结束 HF 常规数据处理 ========
 
 
-def causal_attention_mask(seq_len):
-    return torch.tril(torch.ones((seq_len, seq_len)))
+    def causal_attention_mask(seq_len):
+        return torch.tril(torch.ones((seq_len, seq_len)))
 
 
 class TransformerBlock(nn.Module):
@@ -162,7 +163,7 @@ class TransformerBlock(nn.Module):
             value=inputs,
             need_weights=False,
             key_padding_mask=key_padding_mask,
-            attn_mask=nn.Transformer.generate_square_subsequent_mask(seq_len),
+            attn_mask=nn.Transformer.generate_square_subsequent_mask(seq_len, device=inputs.device),
             is_causal=True,  
         )[0]
 
@@ -236,6 +237,7 @@ class MiniGPT(nn.Module):
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
+        self.maxlen = max_len
         self.embedding_layer = TokenAndPositionEmbedding(
             max_len, vocab_size=vocab_size, embed_dim=embed_dim
         )
@@ -253,49 +255,49 @@ class MiniGPT(nn.Module):
             out_features=vocab_size,
         )
 
-    def forward(self, inputs):
+    def forward(self, inputs, key_padding_mask=None):
         x = self.embedding_layer(inputs)
         for transformer_block in self.transformer_blocks:
-            x = transformer_block(x)
+            x = transformer_block(x, key_padding_mask=key_padding_mask)
         # Pass the output of the transformer blocks through the output layer,
         # and obtain logits for each token in the vocabulary (for next token prediction).
         outputs = self.output_layer(x)
         return outputs
 
-    # def sample_from(self, logits):
-    #     logits, indices = torch.topk(logits, top_k)
-    #     slogits = torch.softmax(logits)
+    def sample_from(self, logits):
+        logits, indices = torch.topk(logits, 5)
+        slogits = torch.softmax(logits, 0)
 
-    #     return indices[torch.multinomial(slogits, 1)]
+        return indices[torch.multinomial(slogits, 1)]
 
-    # def generate_step(self, padded_tokens, sample_index):
-    #     logits = self(padded_tokens)
-    #     next_token = self.sample_from(logits[0][sample_index])
-    #     return next_token
+    def generate_step(self, padded_tokens, sample_index):
+        logits = self(padded_tokens)
+        next_token = self.sample_from(logits[0][sample_index])
+        return next_token
 
-    # def generate_text(self, max_tokens, start_tokens):
-    #     generated = []
-    #     print(tokenizer.decode(start_tokens), flush=True, end="")
-    #     for i in range(max_tokens):
-    #         sample_index = len(start_tokens) + len(generated) - 1
+    def generate_text(self, max_tokens, start_tokens, tokenizer, device):
+        generated = []
+        print(tokenizer.decode(start_tokens), flush=True, end="")
+        for i in range(max_tokens):
+            sample_index = len(start_tokens) + len(generated) - 1
 
-    #         padded_tokens = torch.tensor(
-    #             (
-    #                 start_tokens
-    #                 + generated
-    #                 + [0] * (maxlen - len(start_tokens) - len(generated))
-    #             )
-    #         )[None, :]
-    #         next_token = int(self.generate_step(padded_tokens, sample_index))
-    #         if (
-    #             next_token
-    #             == tokenizer.encode(tokenizer.special_tokens_map["eos_token"])[0]
-    #         ):
-    #             break
-    #         generated.append(next_token)
-    #         # decode and print next_token
-    #         print(tokenizer.decode([next_token]), flush=True, end="")
-    #     return tokenizer.decode(start_tokens + generated)
+            padded_tokens = torch.tensor(
+                (
+                    start_tokens
+                    + generated
+                    + [0] * (self.maxlen - len(start_tokens) - len(generated))
+                )
+            )[None, :].to(device)
+            next_token = int(self.generate_step(padded_tokens, sample_index))
+            if (
+                next_token
+                == tokenizer.encode(tokenizer.special_tokens_map["eos_token"])[0]
+            ):
+                break
+            generated.append(next_token)
+            # decode and print next_token
+            print(tokenizer.decode([next_token]), flush=True, end="")
+        return tokenizer.decode(start_tokens + generated)
 
 
 if __name__ == "__main__":
@@ -322,7 +324,7 @@ if __name__ == "__main__":
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     # 我们只拿一小部分数据测试训练，如果你想全量跑，去掉 select
-    train_dataset = lm_datasets["train"]#.select(range(10000)) if len(lm_datasets["train"]) > 10000 else lm_datasets["train"]
+    train_dataset = lm_datasets["train"].select(range(10000)) if len(lm_datasets["train"]) > 10000 else lm_datasets["train"]
 
     train_dataloader = DataLoader(
         train_dataset,
@@ -349,12 +351,12 @@ if __name__ == "__main__":
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
             # 如果有 key_padding_mask，可以传入 model，这里暂时简写不传入
-            # key_padding_mask = (batch["attention_mask"] == 0).to(device)
+            key_padding_mask = (batch["attention_mask"] == 0).to(device)
 
             optimizer.zero_grad()
 
             # 前向传播 (Shape: batch_size, seq_len, vocab_size)
-            logits = model(input_ids)
+            logits = model(input_ids, key_padding_mask)
 
             # 由于是自回归预测 (预测下一个 token)，我们需要把 logits 向左移一位，labels 向右移一位
             shift_logits = logits[..., :-1, :].contiguous()
