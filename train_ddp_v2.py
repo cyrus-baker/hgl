@@ -1,9 +1,11 @@
 import os
+import math
 import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.distributed as dist
+from torch.nn.attention import sdpa_kernel, SDPBackend
 
 from datasets import load_from_disk
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -181,7 +183,7 @@ def main():
     # 新增：周期性评估与 TensorBoard
     parser.add_argument("--eval_steps", type=int, default=200)
     parser.add_argument("--logging_steps", type=int, default=10)
-    parser.add_argument("--log_dir", type=str, default=".cache/tensorboard")
+    parser.add_argument("--log_dir", type=str, default=None)
     parser.add_argument("--max_eval_samples", type=int, default=1000)
 
     args = parser.parse_args()
@@ -258,18 +260,45 @@ def main():
         num_transformer_blocks=num_transformer_blocks,
     ).to(device)
 
+    model.compile()
+
     model = DDP(model, device_ids=[local_rank], output_device=local_rank)
 
     optimizer = optim.AdamW(model.parameters(), lr=args.lr)
     loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
+
+    warmup_steps = 1000
+    steps_per_epoch = math.ceil(len(train_dataloader))
+    total_update_steps = args.num_epochs * steps_per_epoch
+    cosine_steps = total_update_steps - warmup_steps
+
+    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+    optimizer,
+    start_factor=1e-3,
+    end_factor=1.0, 
+    total_iters=warmup_steps,
+    )
+
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=cosine_steps,
+        eta_min=args.lr * 0.1,
+    )
+
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer,
+        schedulers=[warmup_scheduler, cosine_scheduler],
+        milestones=[warmup_steps],
+    )
 
     use_bf16 = True
     global_step = 0
 
     writer = None
     if is_main_process():
-        os.makedirs(args.log_dir, exist_ok=True)
-        writer = SummaryWriter(log_dir=args.log_dir)
+        if args.log_dir is not None:
+            os.makedirs(args.log_dir, exist_ok=True)
+        writer = SummaryWriter()
         if eval_dataloader is None:
             print("警告：没有找到 test/validation/val split，因此不会进行测试集 loss 评估。")
 
@@ -306,6 +335,7 @@ def main():
 
             loss.backward()
             optimizer.step()
+            scheduler.step()
 
             global_step += 1
             reduced_loss = reduce_mean(loss)

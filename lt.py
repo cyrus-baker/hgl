@@ -18,7 +18,7 @@ if __name__ == "__main__":
 
     vocab_size = len(tokenizer)
     num_transformer_blocks = 8
-    maxlen = 256
+    maxlen = 1024
     embed_dim = 256
     num_heads = 8
     feed_forward_dim = 256
@@ -93,7 +93,7 @@ if __name__ == "__main__":
 
     print(f"数据处理完成！训练集共有 {len(lm_datasets['train'])} 个样本。")
 # ======== 结束 HF 常规数据处理 ========
-
+    exit(0)
 
     def causal_attention_mask(seq_len):
         return torch.tril(torch.ones((seq_len, seq_len)))

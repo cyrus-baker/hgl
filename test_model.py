@@ -42,6 +42,6 @@ if __name__ == "__main__":
 
     print(model)
 
-    start_text = "What is you name? Anna says: \""
+    start_text = "What is you name? Anna says: \"My name is "
     start_token = tokenizer.encode(start_text)
     model.generate_text(256, start_token, tokenizer, device)
