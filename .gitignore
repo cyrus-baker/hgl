@@ -15,3 +15,5 @@ my_tinystory_local
 
 .env
 runs/
+Qwen2.5-3B-Instruct/
+databricks-dolly-15k/
